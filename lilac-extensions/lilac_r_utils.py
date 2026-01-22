@@ -428,11 +428,214 @@ def r_check_pkgbuild(newver: str, cfg: CheckConfig):
         errors = '\n'.join(errors)
         raise CheckFailed(f"Check failed:\n{errors}")
 
-def r_pre_build(_G: SimpleNamespace, **kwargs):
+def r_fix_dependencies(pkg: Pkgbuild, desc: Description, cfg: CheckConfig):
+    """
+    Automatically fix dependencies in PKGBUILD file.
+    Returns a dict with the corrected dependencies.
+    """
+    fixes = {}
+    
+    # Calculate expected dependencies
+    expected_depends = set(desc.depends + desc.imports)
+    cb = cfg.extra_r_depends_cb
+    if cb is not None:
+        expected_depends.update((_r_name_to_arch(dep) for dep in cb(cfg.tar)))
+    
+    # Fix depends array
+    new_depends = []
+    implicit_r_dep = False
+    explicit_r_dep = False
+    
+    for dep in pkg.depends:
+        # Remove dependencies that are in default R packages
+        if dep in cfg.default_r_pkgs:
+            continue
+        
+        if dep.startswith("r-"):
+            if dep in expected_depends:
+                new_depends.append(dep)
+                implicit_r_dep = True
+            # else: skip unnecessary r- dependencies
+        elif dep == "r":
+            explicit_r_dep = True
+            # We'll handle r dependency separately
+        else:
+            # Keep non-R dependencies
+            new_depends.append(dep)
+    
+    # Add missing dependencies
+    for dep in expected_depends:
+        if (dep not in cfg.default_r_pkgs) and (dep not in new_depends):
+            new_depends.append(dep)
+            implicit_r_dep = True
+    
+    # Handle r dependency correctly
+    if implicit_r_dep:
+        # If we have r- dependencies, we don't need explicit 'r'
+        pass
+    else:
+        # If no r- dependencies, we need explicit 'r'
+        if 'r' not in new_depends:
+            new_depends.insert(0, 'r')
+    
+    # Sort dependencies for consistency (keep r or r-* at the beginning)
+    r_deps = [d for d in new_depends if d == 'r' or d.startswith('r-')]
+    other_deps = [d for d in new_depends if d != 'r' and not d.startswith('r-')]
+    new_depends = sorted(r_deps) + sorted(other_deps)
+    
+    fixes['depends'] = new_depends
+    
+    # Fix makedepends array
+    new_makedepends = []
+    for dep in pkg.makedepends:
+        # Remove dependencies that are already in depends
+        if dep in new_depends:
+            continue
+        # Remove dependencies in default R packages
+        if dep in cfg.default_r_pkgs:
+            continue
+        # Keep if it's in LinkingTo or extra makedepends
+        if dep.startswith("r-"):
+            if dep in desc.linkingto or dep in cfg.extra_r_makedepends:
+                new_makedepends.append(dep)
+        else:
+            new_makedepends.append(dep)
+    
+    # Add missing make dependencies
+    for dep in desc.linkingto + cfg.extra_r_makedepends:
+        if (dep not in cfg.default_r_pkgs) and (dep not in new_depends) and (dep not in new_makedepends):
+            new_makedepends.append(dep)
+    
+    # Check fortran files and add/remove gcc-fortran
+    fortran_files = False
+    prefix = f"{pkg._pkgname}/src/"
+    suffixes = (".f", ".f90", ".f95")
+    for name in cfg.tar.getnames():
+        if name.startswith(prefix) and name.endswith(suffixes):
+            fortran_files = True
+            break
+    
+    if fortran_files and "gcc-fortran" not in new_makedepends:
+        new_makedepends.append("gcc-fortran")
+    elif not fortran_files and "gcc-fortran" in new_makedepends:
+        new_makedepends.remove("gcc-fortran")
+    
+    new_makedepends = sorted(new_makedepends)
+    fixes['makedepends'] = new_makedepends
+    
+    # Fix optdepends array
+    new_optdepends = []
+    for dep in pkg.optdepends:
+        # Remove dependencies that are already in depends
+        if dep in new_depends:
+            continue
+        # Remove dependencies in default R packages  
+        if dep in cfg.default_r_pkgs:
+            continue
+        # Keep if it's in Suggests
+        if dep.startswith("r-"):
+            if dep in desc.suggests:
+                new_optdepends.append(dep)
+        else:
+            new_optdepends.append(dep)
+    
+    # Add missing optional dependencies
+    for dep in desc.suggests:
+        if (dep not in cfg.default_r_pkgs) and (dep not in new_optdepends) and (dep not in new_depends):
+            new_optdepends.append(dep)
+    
+    new_optdepends = sorted(new_optdepends)
+    fixes['optdepends'] = new_optdepends
+    
+    return fixes
+
+def r_apply_dependency_fixes(fixes: dict):
+    """
+    Apply dependency fixes to PKGBUILD file.
+    """
+    in_depends = False
+    in_makedepends = False
+    in_optdepends = False
+    indent = "  "
+    
+    for line in edit_file("PKGBUILD"):
+        stripped = line.strip()
+        
+        # Check if we're entering a dependency array
+        if stripped.startswith("depends=("):
+            in_depends = True
+            in_makedepends = False
+            in_optdepends = False
+            print("depends=(")
+            # Print all depends
+            for dep in fixes['depends']:
+                print(f"{indent}{dep}")
+            # Skip until we find the closing parenthesis
+            continue
+        elif stripped.startswith("makedepends=("):
+            in_depends = False
+            in_makedepends = True
+            in_optdepends = False
+            print("makedepends=(")
+            # Print all makedepends
+            for dep in fixes['makedepends']:
+                print(f"{indent}{dep}")
+            continue
+        elif stripped.startswith("optdepends=("):
+            in_depends = False
+            in_makedepends = False
+            in_optdepends = True
+            print("optdepends=(")
+            # Print all optdepends
+            for dep in fixes['optdepends']:
+                print(f"{indent}{dep}")
+            continue
+        
+        # Check if we're exiting a dependency array
+        if in_depends or in_makedepends or in_optdepends:
+            if stripped == ")":
+                in_depends = False
+                in_makedepends = False
+                in_optdepends = False
+                print(line)
+            # Skip lines within dependency arrays (we already printed them)
+            continue
+        
+        # Print all other lines as-is
+        print(line)
+
+def r_pre_build(_G: SimpleNamespace, auto_fix: bool = True, **kwargs):
     cfg = CheckConfig(**kwargs)
     newver, md5sum = _G.newver.rsplit("#", 1)
     cfg.md5sum = md5sum
 
     r_update_pkgver_and_pkgrel(newver)
     run_protected(["updpkgsums"])
-    r_check_pkgbuild(newver, cfg)
+    
+    if auto_fix:
+        # Try to automatically fix dependencies
+        pkgbuild = Pkgbuild()
+        cfg.default_r_pkgs = get_default_r_pkgs()
+        
+        with tarfile.open(f"{pkgbuild._pkgname}_{newver}.tar.gz", "r:gz") as tar:
+            description = Description(tar, pkgbuild._pkgname)
+            cfg.tar = tar
+            
+            # Try to check first
+            try:
+                r_check_pkgbuild(newver, cfg)
+            except CheckFailed as e:
+                # Check if the error is related to dependencies
+                if any(keyword in e.msg for keyword in ["dependency", "dependencies"]):
+                    # Apply automatic fixes
+                    fixes = r_fix_dependencies(pkgbuild, description, cfg)
+                    r_apply_dependency_fixes(fixes)
+                    # Re-run updpkgsums after modifying PKGBUILD
+                    run_protected(["updpkgsums"])
+                    # Check again after fixes
+                    r_check_pkgbuild(newver, cfg)
+                else:
+                    # Re-raise if it's not a dependency issue
+                    raise
+    else:
+        r_check_pkgbuild(newver, cfg)
