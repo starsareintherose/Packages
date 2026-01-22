@@ -438,10 +438,13 @@ def r_fix_dependencies(pkg: Pkgbuild, desc: Description, cfg: CheckConfig, tar: 
         desc: Parsed DESCRIPTION from R package
         cfg: CheckConfig with additional configuration
         tar: Open tarfile for the R package (needed for fortran detection)
+    
+    Note: desc.depends and desc.imports are combined into a set, which
+    automatically handles any duplicates from the DESCRIPTION file.
     """
     fixes = {}
     
-    # Calculate expected dependencies
+    # Calculate expected dependencies (set automatically deduplicates)
     expected_depends = set(desc.depends + desc.imports)
     cb = cfg.extra_r_depends_cb
     if cb is not None:
@@ -450,7 +453,6 @@ def r_fix_dependencies(pkg: Pkgbuild, desc: Description, cfg: CheckConfig, tar: 
     # Fix depends array
     new_depends = []
     implicit_r_dep = False
-    explicit_r_dep = False
     
     for dep in pkg.depends:
         # Remove dependencies that are in default R packages
@@ -463,8 +465,8 @@ def r_fix_dependencies(pkg: Pkgbuild, desc: Description, cfg: CheckConfig, tar: 
                 implicit_r_dep = True
             # else: skip unnecessary r- dependencies
         elif dep == "r":
-            explicit_r_dep = True
-            # We'll handle r dependency separately
+            # We'll handle r dependency separately based on check_depends logic
+            pass
         else:
             # Keep non-R dependencies
             new_depends.append(dep)
@@ -475,16 +477,26 @@ def r_fix_dependencies(pkg: Pkgbuild, desc: Description, cfg: CheckConfig, tar: 
             new_depends.append(dep)
             implicit_r_dep = True
     
-    # Handle r dependency correctly
-    if not implicit_r_dep and 'r' not in new_depends:
-        # If no r- dependencies, we need explicit 'r'
+    # Handle r dependency correctly (matching check_depends logic)
+    # We need 'r' only if all dependencies are present and there's no implicit r dependency
+    all_deps_present = all(
+        (dep in cfg.default_r_pkgs or dep in new_depends) 
+        for dep in expected_depends
+    )
+    if all_deps_present and not implicit_r_dep:
         new_depends.insert(0, 'r')
     
-    # Sort dependencies for consistency (keep r or r-* at the beginning)
-    r_deps = [d for d in new_depends if d == 'r' or d.startswith('r-')]
-    other_deps = [d for d in new_depends if d != 'r' and not d.startswith('r-')]
-    new_depends = sorted(r_deps) + sorted(other_deps)
+    # Sort dependencies for consistency
+    def sort_key(dep):
+        # Sort r first, then r-* packages, then others
+        if dep == 'r':
+            return (0, dep)
+        elif dep.startswith('r-'):
+            return (1, dep)
+        else:
+            return (2, dep)
     
+    new_depends = sorted(new_depends, key=sort_key)
     fixes['depends'] = new_depends
     
     # Fix makedepends array
@@ -632,7 +644,7 @@ def r_pre_build(_G: SimpleNamespace, auto_fix: bool = True, **kwargs):
                 r_check_pkgbuild(newver, cfg)
             except CheckFailed as e:
                 # Check if the error is related to dependencies
-                error_msg = str(e.msg) if hasattr(e, 'msg') else str(e)
+                error_msg = str(e.msg)
                 dependency_keywords = [
                     "Unnecessary dependency",
                     "Missing dependency", 
