@@ -41,6 +41,47 @@ The automatic fix feature handles the following dependency issues:
 
 ## Usage
 
+### Migrating Existing Packages
+
+If your package currently uses a simple `lilac.py` that manually updates versions, you can migrate to use `r_pre_build` for automatic dependency management.
+
+**Before (manual version update only):**
+```python
+#!/usr/bin/env python3
+from lilaclib import *
+
+def pre_build():
+    for line in edit_file('PKGBUILD'):
+        if line.startswith('_pkgver='):
+            line = f'_pkgver={_G.newver}'
+        print(line)
+    update_pkgver_and_pkgrel(_G.newver.replace(':', '.').replace('-', '.'))
+
+def post_build():
+    git_pkgbuild_commit()
+    update_aur_repo()
+```
+
+**After (with automatic dependency fixing):**
+```python
+#!/usr/bin/env python3
+from lilaclib import *
+
+import os
+import sys
+sys.path.append(os.path.normpath(f'{__file__}/../../../lilac-extensions'))
+from lilac_r_utils import r_pre_build
+
+def pre_build():
+    r_pre_build(_G)
+
+def post_build():
+    git_pkgbuild_commit()
+    update_aur_repo()
+```
+
+By default, `auto_fix=True`, so dependency issues will be automatically corrected.
+
 ### Default Behavior (Auto-fix Enabled)
 
 The simplest way to use this feature is to just call `r_pre_build` with `_G`:
