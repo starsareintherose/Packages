@@ -430,36 +430,38 @@ def r_check_pkgbuild(newver: str, cfg: CheckConfig):
 
 def r_fix_dependencies(pkg: Pkgbuild, desc: Description, cfg: CheckConfig, tar: tarfile.TarFile):
     """
-    Automatically fix dependencies in PKGBUILD file.
+    Automatically fix R package dependencies (r-*) in PKGBUILD file.
+    Only handles r-* dependencies, preserving all other dependencies as-is.
     Returns a dict with the corrected dependencies.
     
     Args:
         pkg: Parsed PKGBUILD
         desc: Parsed DESCRIPTION from R package
         cfg: CheckConfig with additional configuration
-        tar: Open tarfile for the R package (needed for fortran detection)
+        tar: Open tarfile for the R package (unused, kept for compatibility)
     
     Note: desc.depends and desc.imports are combined into a set, which
     automatically handles any duplicates from the DESCRIPTION file.
     """
     fixes = {}
     
-    # Calculate expected dependencies (set automatically deduplicates)
+    # Calculate expected R dependencies (set automatically deduplicates)
     expected_depends = set(desc.depends + desc.imports)
     cb = cfg.extra_r_depends_cb
     if cb is not None:
         expected_depends.update((_r_name_to_arch(dep) for dep in cb(tar)))
     
-    # Fix depends array
+    # Fix depends array - only modify r-* packages
     new_depends = []
     implicit_r_dep = False
     
     for dep in pkg.depends:
-        # Remove dependencies that are in default R packages
+        # Remove R dependencies that are in default R packages
         if dep in cfg.default_r_pkgs:
             continue
         
         if dep.startswith("r-"):
+            # Only keep r-* dependencies that are expected
             if dep in expected_depends:
                 new_depends.append(dep)
                 implicit_r_dep = True
@@ -468,10 +470,10 @@ def r_fix_dependencies(pkg: Pkgbuild, desc: Description, cfg: CheckConfig, tar: 
             # We'll handle r dependency separately based on check_depends logic
             pass
         else:
-            # Keep non-R dependencies
+            # Keep all non-R dependencies as-is
             new_depends.append(dep)
     
-    # Add missing dependencies
+    # Add missing R dependencies
     for dep in expected_depends:
         if (dep not in cfg.default_r_pkgs) and (dep not in new_depends):
             new_depends.append(dep)
@@ -499,61 +501,49 @@ def r_fix_dependencies(pkg: Pkgbuild, desc: Description, cfg: CheckConfig, tar: 
     new_depends = sorted(new_depends, key=sort_key)
     fixes['depends'] = new_depends
     
-    # Fix makedepends array
+    # Fix makedepends array - only modify r-* packages
     new_makedepends = []
     for dep in pkg.makedepends:
-        # Remove dependencies that are already in depends
-        if dep in new_depends:
-            continue
-        # Remove dependencies in default R packages
-        if dep in cfg.default_r_pkgs:
-            continue
-        # Keep if it's in LinkingTo or extra makedepends
         if dep.startswith("r-"):
+            # Remove r-* dependencies that are already in depends
+            if dep in new_depends:
+                continue
+            # Remove r-* dependencies in default R packages
+            if dep in cfg.default_r_pkgs:
+                continue
+            # Keep if it's in LinkingTo or extra makedepends
             if dep in desc.linkingto or dep in cfg.extra_r_makedepends:
                 new_makedepends.append(dep)
         else:
+            # Keep all non-R makedepends as-is (e.g., gcc-fortran)
             new_makedepends.append(dep)
     
-    # Add missing make dependencies
+    # Add missing R make dependencies
     for dep in desc.linkingto + cfg.extra_r_makedepends:
         if (dep not in cfg.default_r_pkgs) and (dep not in new_depends) and (dep not in new_makedepends):
             new_makedepends.append(dep)
     
-    # Check fortran files and add/remove gcc-fortran
-    fortran_files = False
-    prefix = f"{pkg._pkgname}/src/"
-    suffixes = (".f", ".f90", ".f95")
-    for name in tar.getnames():
-        if name.startswith(prefix) and name.endswith(suffixes):
-            fortran_files = True
-            break
-    
-    if fortran_files and "gcc-fortran" not in new_makedepends:
-        new_makedepends.append("gcc-fortran")
-    elif not fortran_files and "gcc-fortran" in new_makedepends:
-        new_makedepends.remove("gcc-fortran")
-    
     new_makedepends = sorted(new_makedepends)
     fixes['makedepends'] = new_makedepends
     
-    # Fix optdepends array
+    # Fix optdepends array - only modify r-* packages
     new_optdepends = []
     for dep in pkg.optdepends:
-        # Remove dependencies that are already in depends
-        if dep in new_depends:
-            continue
-        # Remove dependencies in default R packages  
-        if dep in cfg.default_r_pkgs:
-            continue
-        # Keep if it's in Suggests
         if dep.startswith("r-"):
+            # Remove r-* dependencies that are already in depends
+            if dep in new_depends:
+                continue
+            # Remove r-* dependencies in default R packages  
+            if dep in cfg.default_r_pkgs:
+                continue
+            # Keep if it's in Suggests
             if dep in desc.suggests:
                 new_optdepends.append(dep)
         else:
+            # Keep all non-R optdepends as-is
             new_optdepends.append(dep)
     
-    # Add missing optional dependencies
+    # Add missing R optional dependencies
     for dep in desc.suggests:
         if (dep not in cfg.default_r_pkgs) and (dep not in new_optdepends) and (dep not in new_depends):
             new_optdepends.append(dep)
@@ -618,6 +608,48 @@ def r_apply_dependency_fixes(fixes: dict):
         # Print all other lines as-is
         print(line)
 
+def r_update_lilac_yaml(fixes: dict):
+    """
+    Update lilac.yaml file with corrected R package dependencies.
+    Only updates repo_depends with r-* packages from the fixed depends list.
+    """
+    import os
+    import yaml
+    
+    if not os.path.exists("lilac.yaml"):
+        return  # No lilac.yaml file to update
+    
+    # Load existing lilac.yaml
+    with open("lilac.yaml", "r") as f:
+        data = yaml.safe_load(f)
+    
+    if data is None:
+        data = {}
+    
+    # Extract only r-* dependencies (excluding 'r' itself)
+    r_deps = [dep for dep in fixes['depends'] if dep.startswith('r-')]
+    
+    # Update repo_depends with r-* packages
+    if r_deps:
+        data['repo_depends'] = r_deps
+    elif 'repo_depends' in data:
+        # Remove repo_depends if no r-* dependencies
+        del data['repo_depends']
+    
+    # Extract only r-* makedepends
+    r_makedeps = [dep for dep in fixes['makedepends'] if dep.startswith('r-')]
+    
+    # Update repo_makedepends with r-* packages
+    if r_makedeps:
+        data['repo_makedepends'] = r_makedeps
+    elif 'repo_makedepends' in data:
+        # Remove repo_makedepends if no r-* makedepends
+        del data['repo_makedepends']
+    
+    # Write updated lilac.yaml
+    with open("lilac.yaml", "w") as f:
+        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+
 def r_pre_build(_G: SimpleNamespace, auto_fix: bool = True, **kwargs):
     cfg = CheckConfig(**kwargs)
     newver, md5sum = _G.newver.rsplit("#", 1)
@@ -659,6 +691,7 @@ def r_pre_build(_G: SimpleNamespace, auto_fix: bool = True, **kwargs):
                     # Apply automatic fixes - pass tar object explicitly
                     fixes = r_fix_dependencies(pkgbuild, description, cfg, tar)
                     r_apply_dependency_fixes(fixes)
+                    r_update_lilac_yaml(fixes)
                     applied_fixes = True
                 else:
                     # Re-raise if it's not a dependency issue

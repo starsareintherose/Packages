@@ -9,8 +9,9 @@ This PR successfully implements automatic dependency management for R packages i
 
 1. **New Function: `r_fix_dependencies()`**
    - Analyzes current PKGBUILD dependencies vs. DESCRIPTION file requirements
-   - Calculates correct dependencies for depends, makedepends, and optdepends arrays
-   - Handles special cases like fortran files and implicit R dependencies
+   - Calculates correct R package (r-*) dependencies only
+   - Preserves non-R system dependencies unchanged
+   - Handles implicit R dependencies
    - Returns a dict with corrected dependency lists
 
 2. **New Function: `r_apply_dependency_fixes()`**
@@ -18,9 +19,15 @@ This PR successfully implements automatic dependency management for R packages i
    - Preserves file structure and formatting
    - Safely replaces dependency arrays with corrected versions
 
-3. **Enhanced Function: `r_pre_build()`**
+3. **New Function: `r_update_lilac_yaml()`**
+   - Updates lilac.yaml file with R package dependencies
+   - Sets repo_depends and repo_makedepends with r-* packages
+   - Preserves other lilac.yaml fields
+
+4. **Enhanced Function: `r_pre_build()`**
    - Added `auto_fix` parameter (default: `True`)
-   - Automatically detects and fixes dependency issues
+   - Automatically detects and fixes R dependency issues
+   - Updates both PKGBUILD and lilac.yaml files
    - Re-validates after applying fixes
    - Backward compatible with existing usage
 
@@ -57,30 +64,35 @@ This PR successfully implements automatic dependency management for R packages i
 
 ### What Gets Fixed Automatically
 
-✅ **Unnecessary Dependencies**
+✅ **Unnecessary R Dependencies**
 - Removes R packages not in DESCRIPTION Depends/Imports
 - Example: `r-dplyr` removed if not in DESCRIPTION
 
-✅ **Missing Dependencies**
+✅ **Missing R Dependencies**
 - Adds R packages from DESCRIPTION Depends/Imports
 - Example: `r-ggplot2` added if in DESCRIPTION but not in PKGBUILD
 
-✅ **Unnecessary Optional Dependencies**
+✅ **Unnecessary R Optional Dependencies**
 - Removes from optdepends if not in DESCRIPTION Suggests
 - Removes from optdepends if already in depends
 
-✅ **Missing Optional Dependencies**
+✅ **Missing R Optional Dependencies**
 - Adds from DESCRIPTION Suggests to optdepends
 - Example: `r-testthat` added if in DESCRIPTION Suggests
 
-✅ **Make Dependencies**
+✅ **R Make Dependencies**
 - Adds packages from DESCRIPTION LinkingTo
-- Handles `gcc-fortran` based on Fortran source files
-- Removes duplicates already in depends
+- Removes R packages already in depends or not in LinkingTo
 
 ✅ **R Dependency Management**
 - Correctly handles implicit R dependency (when r-* packages exist)
 - Adds explicit 'r' when needed (no r-* packages but R is required)
+
+✅ **lilac.yaml Update**
+- Updates `repo_depends` with R dependencies from fixed depends array
+- Updates `repo_makedepends` with R dependencies from fixed makedepends array
+
+**Important**: Only R package dependencies (r-*) are modified. Non-R system dependencies like gcc-fortran, cmake, libxml2, etc. are preserved unchanged.
 
 ## Usage
 

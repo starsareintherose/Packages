@@ -8,36 +8,43 @@ The `r_pre_build` function now includes automatic dependency fixing capability. 
 
 ## What Gets Fixed Automatically
 
-The automatic fix feature handles the following dependency issues:
+The automatic fix feature handles the following **R package (r-\*) dependencies only**. Non-R system dependencies (like gcc-fortran, cmake, libxml2, etc.) are preserved as-is.
 
-### 1. **Unnecessary Dependencies**
+### 1. **Unnecessary R Dependencies**
 - Removes R packages listed in `depends` that are not in `Depends` or `Imports` fields of the DESCRIPTION file
 - Removes R packages that are included in the base R distribution
 - Example: If `r-dplyr` is in PKGBUILD `depends` but not in DESCRIPTION `Imports`, it will be removed
+- **Non-R dependencies** like `libxml2`, `gcc` are kept unchanged
 
-### 2. **Missing Dependencies**
+### 2. **Missing R Dependencies**
 - Adds R packages from DESCRIPTION `Depends` and `Imports` that are missing from PKGBUILD `depends`
 - Example: If `r-ggplot2` is in DESCRIPTION `Imports` but not in PKGBUILD `depends`, it will be added
 
-### 3. **Unnecessary Optional Dependencies**
+### 3. **Unnecessary R Optional Dependencies**
 - Removes R packages from `optdepends` that are already in `depends`
 - Removes R packages from `optdepends` that are not in DESCRIPTION `Suggests`
 - Example: If `r-knitr` is in both `depends` and `optdepends`, it will be removed from `optdepends`
+- **Non-R dependencies** like `python` are kept unchanged
 
-### 4. **Missing Optional Dependencies**
+### 4. **Missing R Optional Dependencies**
 - Adds R packages from DESCRIPTION `Suggests` that are missing from PKGBUILD `optdepends`
 - Example: If `r-testthat` is in DESCRIPTION `Suggests` but not in PKGBUILD `optdepends`, it will be added
 
-### 5. **Make Dependencies**
-- Removes `makedepends` that are already in `depends`
-- Removes R package `makedepends` that are not in DESCRIPTION `LinkingTo`
-- Adds missing packages from DESCRIPTION `LinkingTo` to `makedepends`
-- Automatically handles `gcc-fortran` based on presence of Fortran source files
+### 5. **R Make Dependencies**
+- Removes R package `makedepends` that are already in `depends`
+- Removes R packages from `makedepends` that are not in DESCRIPTION `LinkingTo`
+- Adds missing R packages from DESCRIPTION `LinkingTo` to `makedepends`
+- **Non-R dependencies** like `gcc-fortran`, `cmake` are kept unchanged
 
 ### 6. **R Dependency**
 - Correctly manages the `r` dependency:
   - If there are other R package dependencies (r-*), `r` is implicit and removed if explicitly listed
   - If there are no R package dependencies, `r` is added explicitly
+
+### 7. **lilac.yaml Update**
+- Updates `repo_depends` field with R package dependencies from fixed `depends` array
+- Updates `repo_makedepends` field with R package dependencies from fixed `makedepends` array
+- Only includes r-* packages (excludes 'r' itself and non-R dependencies)
 
 ## Usage
 
@@ -182,9 +189,9 @@ optdepends=(
 
 ## Limitations
 
-- Only fixes dependency-related issues
-- Other issues (license changes, system requirements, etc.) still require manual intervention or configuration
-- Non-R dependencies (system libraries) are preserved but not validated
+- Only fixes R package (r-*) dependency issues
+- Non-R system dependencies (gcc-fortran, cmake, libxml2, etc.) are preserved as-is
+- Other issues (license changes, system requirements) still require manual intervention or configuration
 - The feature requires the package source tarball to be available for parsing the DESCRIPTION file
 
 ## Backward Compatibility

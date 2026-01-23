@@ -22,12 +22,15 @@ For packages using manual version updates, see [README_AUTO_FIX.md](./README_AUT
 
 ### What Gets Fixed
 
-- ✅ Unnecessary dependencies (removes them)
-- ✅ Missing dependencies (adds them)
-- ✅ Unnecessary optional dependencies (removes them)
-- ✅ Missing optional dependencies (adds them)
-- ✅ Make dependencies (gcc-fortran, LinkingTo packages)
+- ✅ Unnecessary R dependencies (removes them)
+- ✅ Missing R dependencies (adds them)
+- ✅ Unnecessary R optional dependencies (removes them)
+- ✅ Missing R optional dependencies (adds them)
+- ✅ R make dependencies (LinkingTo packages)
 - ✅ R dependency management (implicit vs explicit)
+- ✅ lilac.yaml repo_depends and repo_makedepends (R packages only)
+
+**Note**: Only R package dependencies (r-*) are modified. Non-R system dependencies like gcc-fortran, cmake, libxml2, etc. are preserved as-is.
 
 ### Documentation
 
