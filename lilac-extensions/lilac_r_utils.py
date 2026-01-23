@@ -619,36 +619,44 @@ def r_update_lilac_yaml(fixes: dict):
     if not os.path.exists("lilac.yaml"):
         return  # No lilac.yaml file to update
     
-    # Load existing lilac.yaml
-    with open("lilac.yaml", "r") as f:
-        data = yaml.safe_load(f)
+    try:
+        # Load existing lilac.yaml
+        with open("lilac.yaml", "r") as f:
+            data = yaml.safe_load(f)
+        
+        if data is None:
+            data = {}
+        
+        # Extract only r-* dependencies (excluding 'r' itself)
+        r_deps = [dep for dep in fixes['depends'] if dep.startswith('r-')]
+        
+        # Update repo_depends with r-* packages
+        if r_deps:
+            data['repo_depends'] = r_deps
+        elif 'repo_depends' in data:
+            # Remove repo_depends if no r-* dependencies
+            del data['repo_depends']
+        
+        # Extract only r-* makedepends
+        r_makedeps = [dep for dep in fixes['makedepends'] if dep.startswith('r-')]
+        
+        # Update repo_makedepends with r-* packages
+        if r_makedeps:
+            data['repo_makedepends'] = r_makedeps
+        elif 'repo_makedepends' in data:
+            # Remove repo_makedepends if no r-* makedepends
+            del data['repo_makedepends']
+        
+        # Write updated lilac.yaml
+        with open("lilac.yaml", "w") as f:
+            yaml.dump(data, f, default_flow_style=False, sort_keys=False)
     
-    if data is None:
-        data = {}
-    
-    # Extract only r-* dependencies (excluding 'r' itself)
-    r_deps = [dep for dep in fixes['depends'] if dep.startswith('r-')]
-    
-    # Update repo_depends with r-* packages
-    if r_deps:
-        data['repo_depends'] = r_deps
-    elif 'repo_depends' in data:
-        # Remove repo_depends if no r-* dependencies
-        del data['repo_depends']
-    
-    # Extract only r-* makedepends
-    r_makedeps = [dep for dep in fixes['makedepends'] if dep.startswith('r-')]
-    
-    # Update repo_makedepends with r-* packages
-    if r_makedeps:
-        data['repo_makedepends'] = r_makedeps
-    elif 'repo_makedepends' in data:
-        # Remove repo_makedepends if no r-* makedepends
-        del data['repo_makedepends']
-    
-    # Write updated lilac.yaml
-    with open("lilac.yaml", "w") as f:
-        yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+    except (IOError, OSError, PermissionError) as e:
+        # Log error but don't fail the build - lilac.yaml update is optional
+        print(f"Warning: Failed to update lilac.yaml: {e}")
+    except yaml.YAMLError as e:
+        # Log YAML parsing/serialization errors
+        print(f"Warning: YAML error while updating lilac.yaml: {e}")
 
 def r_pre_build(_G: SimpleNamespace, auto_fix: bool = True, **kwargs):
     cfg = CheckConfig(**kwargs)
